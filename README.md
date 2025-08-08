@@ -6,7 +6,6 @@ Arquitetura do Projeto
 
 A arquitetura do projeto foi pensada para operar inicialmente em duas máquinas, usando a nuvem como ponto de integração. No entanto, o design foi feito de forma a permitir uma fácil escalabilidade para uma arquitetura mais complexa de três máquinas, que seria dedicada ao processamento analítico.
 
-<img width="2048" height="2048" alt="Gemini_Generated_Image_pv0kplpv0kplpv0k" src="https://github.com/user-attachments/assets/9fe3e453-dce6-48a0-9f82-e9f9e71c48ed" />
 
 Máquina 1 (Windows): Este ambiente foi usado como a Fonte de Dados. Foi aqui que criei os scripts que simulam a geração de novos dados operacionais e que foram usados para publicá-los na nuvem.
 
@@ -37,11 +36,13 @@ Configuração e Pré-requisitos
 
 Para replicar este projeto, o primeiro passo foi seguir uma série de configurações:
 
-1. Configuração do Ambiente Python
+## 1. Configuração do Ambiente Python
 
 Em ambas as máquinas (Windows e Ubuntu), o ambiente virtual foi criado e as dependências foram instaladas.
 
-```# O repositório foi clonado
+O repositório foi clonado
+
+```bash
 git clone <URL_DO_SEU_REPOSITORIO>
 cd <NOME_DO_PROJETO>
 
@@ -53,9 +54,11 @@ source venv/bin/activate
 .\venv\Scripts\activate
 
 # As bibliotecas necessárias foram instaladas
-pip install pandas sqlalchemy pymysql rclone```
+pip install pandas sqlalchemy pymysql rclone
 
-2. Configuração do MySQL
+
+
+## 2. Configuração do MySQL
 
 No servidor de banco de dados (Máquina 2), um banco de dados e um usuário foram criados para o pipeline.
 
@@ -68,11 +71,11 @@ FLUSH PRIVILEGES;```
 Observação: Para permitir o acesso remoto de outra máquina, foi necessário alterar o bind-address do MySQL e liberar uma das portas no firewall apenas para IPs autorizados.
 
 
-3. Estrutura de Dados (DDL)
+## 3. Estrutura de Dados (DDL)
 
 As tabelas foram criadas de forma programática através do script em Python, mas a sua estrutura foi definida para acomodar os dados de veículos e manutenções da seguinte forma:
 
-Tabela veiculos
+Tabela veiculos 
 
 ```CREATE TABLE `veiculos` (
   `placa` VARCHAR(10) NOT NULL,
@@ -86,7 +89,8 @@ Tabela veiculos
 
 Tabela manutencoes
 
-```CREATE TABLE `manutencoes` (
+```sql
+CREATE TABLE `manutencoes` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `placa_veiculo` VARCHAR(10) DEFAULT NULL,
   `tipo_manutencao` VARCHAR(100) DEFAULT NULL,
@@ -95,7 +99,13 @@ Tabela manutencoes
   PRIMARY KEY (`id`),
   KEY `manutencoes_ibfk_1` (`placa_veiculo`),
   CONSTRAINT `manutencoes_ibfk_1` FOREIGN KEY (`placa_veiculo`) REFERENCES `veiculos` (`placa`)
-) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;```
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+```
+
+Tabela do Banco:
+
+<img width="618" height="655" alt="Captura de tela de 2025-08-08 17-30-36" src="https://github.com/user-attachments/assets/41d64057-ba32-4283-9ab0-97341dee97b4" />
+
 
 O Uso do Pipeline
 
