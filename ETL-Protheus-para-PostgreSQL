@@ -1,0 +1,277 @@
+# projeto-portfolio-engenharia-de-dados
+
+#1. Este projeto consiste em um script de ETL (Extract, Transform, Load) em Python desenvolvido para automatizar a migração de dados de clientes do sistema Protheus (utilizando uma base de dados SQL Server) para um Data Lake em PostgreSQL. O processo foi criado para garantir que os dados de clientes mais relevantes estivessem disponíveis em um ambiente mais flexível para análises e relatórios.
+
+#2. Tecnologias Utilizadas
+Linguagem de Programação: Python 3
+
+Conexão com Banco de Dados de Origem (SQL Server): A conexão com o SQL Server foi estabelecida utilizando a biblioteca pyodbc, que permitiu a execução de queries SQL para a extração dos dados.
+
+Processamento e Manipulação de Dados: A biblioteca pandas foi a ferramenta central para a manipulação dos dados extraídos. Ela possibilitou a leitura dos resultados da query em um DataFrame, a aplicação de transformações necessárias e a preparação dos dados para o carregamento.
+
+Conexão com Banco de Dados de Destino (PostgreSQL): A persistência dos dados no PostgreSQL foi gerenciada pela biblioteca SQLAlchemy, que criou uma engine de conexão. A biblioteca psycopg2 foi utilizada como o driver de banco de dados para a comunicação com o PostgreSQL.
+
+Gerenciamento de Ambiente: O ambiente de desenvolvimento e produção do PostgreSQL foi orquestrado com o Docker, garantindo portabilidade e fácil configuração.
+
+Gerenciamento de Credenciais: As credenciais de acesso aos bancos de dados foram gerenciadas de forma segura e flexível, utilizando o pacote python-dotenv para carregar as variáveis de ambiente a partir de um arquivo .env local. Isso permitiu o uso de credenciais diferentes em ambientes distintos sem a necessidade de alterar o código-fonte do script.
+
+#3. O Processo de ETL
+Extract (Extração)
+A etapa de extração focou em obter os dados da tabela SA1010 do SQL Server do sistema Protheus. Uma query SQL específica foi criada para selecionar as 5 colunas essenciais (a1_cod, a1_nome, a1_cgc, a1_est, a1_mun) e limitar o número de registros para fins de teste e desenvolvimento. A conexão com o banco de dados de origem foi encapsulada em um context manager para garantir que a conexão fosse sempre fechada corretamente, mesmo em caso de erros.
+
+Transform (Transformação)
+Após a extração, os dados foram carregados em um DataFrame do pandas para a etapa de transformação. Nesta fase, foram aplicadas algumas operações de limpeza e padronização:
+
+Os espaços em branco no início e no fim das colunas de texto foram removidos para garantir a consistência dos dados.
+
+Registros com valores vazios ou ausentes nas colunas críticas (a1_cod e a1_nome) foram removidos para garantir a integridade dos dados antes do carregamento.
+
+Load (Carregamento)
+A etapa de carregamento consistiu em inserir os dados transformados no banco de dados PostgreSQL. O processo foi realizado em lotes (chunks) para otimizar o uso de memória e a performance em grandes volumes de dados. A estratégia de carregamento adotada foi a de "substituir a tabela" (if_exists='replace'), que permitiu a recriação da tabela a cada execução do script, garantindo que o esquema da tabela de destino estivesse sempre alinhado com o do DataFrame. Além disso, foi criado um índice na coluna a1_cod para otimizar futuras consultas.
+
+#4. Estrutura do Projeto
+O projeto foi estruturado com as seguintes convenções:
+
+Um script Python (etl_emtel_sqlserver_to_postgres.py) contendo toda a lógica de extração, transformação e carregamento.
+
+As configurações de conexão foram centralizadas em um dicionário (PG_CONFIG e SQL_SERVER_CONFIG), utilizando variáveis de ambiente para maior segurança e flexibilidade.
+
+A gestão de dependências foi facilitada com a instalação dos pacotes necessários (pandas, pyodbc, sqlalchemy, psycopg2-binary, python-dotenv).
+
+Este projeto demonstrou a automação de um fluxo de dados complexo, combinando diferentes tecnologias para resolver um problema de integração e preparação de dados de forma robusta e eficiente.
+
+
+ ETL Script - Versão simplificada compatível com o código original
+Corrige os problemas de incompatibilidade de colunas e encoding
+
+# -*- coding: utf-8 -*-
+"""
+Script de ETL para extrair dados do SQL Server (via pyodbc) e carregá-los
+em um banco de dados PostgreSQL (via SQLAlchemy).
+"""
+
+import os
+import sys
+import logging
+import pandas as pd
+import pyodbc
+import traceback
+from contextlib import contextmanager
+from sqlalchemy import create_engine, text
+from urllib.parse import quote_plus
+from dotenv import load_dotenv
+
+# Configurações de log. Use utf-8 para compatibilidade de caracteres.
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('etl_process.log', encoding='utf-8')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Carrega variáveis de ambiente se o arquivo .env existir
+if os.path.exists('.env'):
+    load_dotenv()
+    logger.info("Arquivo .env carregado com sucesso.")
+
+# Configurações do SQL Server (valores padrão hardcoded para exemplo)
+SQL_SERVER_CONFIG = {
+    "host": os.getenv("SQL_HOST", "SEU_HOST_SQL"),
+    "database": os.getenv("SQL_DATABASE", "SEU_DATABASE_SQL"),
+    "user": os.getenv("SQL_USER", "SEU_USUARIO_SQL"),
+    "password": os.getenv("SQL_PASSWORD", "SUA_SENHA_SQL")
+}
+
+# Configurações do PostgreSQL
+PG_CONFIG = {
+    "host": os.getenv("PG_HOST", "SEU_HOST_PG"),
+    "port": os.getenv("PG_PORT", "5432"),  # Porta padrão do PostgreSQL
+    "database": os.getenv("PG_DATABASE", "SEU_DATABASE_PG"),
+    "user": os.getenv("PG_USER", "SEU_USUARIO_PG"),
+    "password": os.getenv("PG_PASSWORD", "SUA_SENHA_PG")
+}
+
+QUERY_LIMIT = int(os.getenv("QUERY_LIMIT", "200"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "100"))
+
+@contextmanager
+def get_sql_server_connection():
+    """Gerenciador de contexto para conexão com o SQL Server."""
+    connection_string = (
+        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        f"SERVER={SQL_SERVER_CONFIG['host']};"
+        f"DATABASE={SQL_SERVER_CONFIG['database']};"
+        f"UID={SQL_SERVER_CONFIG['user']};"
+        f"PWD={SQL_SERVER_CONFIG['password']};"
+        f"TrustServerCertificate=yes;"
+    )
+    
+    conn = None
+    try:
+        logger.info("Conectando ao SQL Server...")
+        conn = pyodbc.connect(connection_string)
+        logger.info("Conectado ao SQL Server com sucesso!")
+        yield conn
+    except Exception as e:
+        logger.error(f"Erro ao conectar no SQL Server: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
+            logger.info("Conexão SQL Server fechada.")
+
+def extract_data():
+    """Extrai dados do SQL Server."""
+    query = f"""
+    SELECT TOP {QUERY_LIMIT}
+        A1_COD AS a1_cod,
+        A1_NOME AS a1_nome,
+        A1_CGC AS a1_cgc,
+        A1_EST AS a1_est,
+        A1_MUN AS a1_mun
+    FROM SA1010
+    WHERE D_E_L_E_T_ = ''
+    ORDER BY A1_COD
+    """
+    
+    try:
+        with get_sql_server_connection() as connection:
+            logger.info("Executando consulta de extração...")
+            df = pd.read_sql(query, connection)
+            
+            if df.empty:
+                logger.warning("Nenhum dado encontrado!")
+                return pd.DataFrame()
+            
+            logger.info(f"Total de linhas lidas: {len(df)}")
+            logger.info("Primeiras 5 linhas:")
+            print(df.head())
+            
+            return df
+            
+    except Exception as e:
+        logger.error(f"Erro na extração: {e}")
+        raise
+
+def transform_data(df):
+    """Aplica transformações básicas nos dados."""
+    if df.empty:
+        return df
+    
+    logger.info("Aplicando transformações...")
+    
+    # Limpeza básica de strings
+    for col in ['a1_nome', 'a1_cgc', 'a1_est', 'a1_mun']:
+        df[col] = df[col].astype(str).str.strip()
+    
+    # Remove registros com dados essenciais vazios
+    df = df.dropna(subset=['a1_cod', 'a1_nome'])
+    df = df.loc[(df['a1_cod'] != '') & (df['a1_nome'] != '')]
+    
+    logger.info(f"Após transformações: {len(df)} registros")
+    return df
+
+def create_postgresql_engine():
+    """Cria a engine do PostgreSQL para conexão."""
+    try:
+        pg_password = quote_plus(PG_CONFIG['password'])
+        connection_string = (
+            f"postgresql://{PG_CONFIG['user']}:{pg_password}"
+            f"@{PG_CONFIG['host']}:{PG_CONFIG['port']}"
+            f"/{PG_CONFIG['database']}"
+        )
+        
+        engine = create_engine(connection_string, pool_pre_ping=True)
+        logger.info("Engine PostgreSQL criada com sucesso.")
+        return engine
+        
+    except Exception as e:
+        logger.error(f"Erro ao criar a engine do PostgreSQL: {e}")
+        raise
+
+def load_data(df, engine):
+    """
+    Carrega dados no PostgreSQL usando o método to_sql do Pandas.
+    O parâmetro `if_exists='replace'` garante que a tabela seja
+    sempre recriada com o esquema do DataFrame.
+    """
+    if df.empty:
+        logger.warning("DataFrame vazio, nada para carregar.")
+        return
+    
+    try:
+        # Adiciona carimbo de data/hora do processamento
+        df['data_processamento'] = pd.Timestamp.now()
+        
+        # Insere os dados
+        logger.info(f"Inserindo {len(df)} registros...")
+        df.to_sql(
+            'clientes_protheus',
+            con=engine,
+            schema='public',
+            if_exists='replace',
+            index=False,
+            chunksize=CHUNK_SIZE
+        )
+        
+        # Recria o índice após a inserção (o 'replace' remove índices)
+        with engine.begin() as connection:
+            create_index_sql = """
+            CREATE INDEX IF NOT EXISTS idx_clientes_a1_cod ON public.clientes_protheus(a1_cod);
+            """
+            connection.execute(text(create_index_sql))
+            logger.info("Índice 'idx_clientes_a1_cod' criado com sucesso.")
+
+            # Verifica a inserção
+            result = connection.execute(text("SELECT COUNT(*) FROM public.clientes_protheus;"))
+            count = result.scalar()
+            logger.info(f"Dados inseridos com sucesso! Total na tabela: {count}")
+            
+    except Exception as e:
+        logger.error(f"Erro ao carregar dados: {e}")
+        raise
+
+def main():
+    """Função principal que orquestra o processo de ETL."""
+    try:
+        logger.info("=== INICIANDO PROCESSO ETL ===")
+        
+        # 1. Extrair
+        logger.info("1. EXTRAINDO dados do SQL Server...")
+        df = extract_data()
+        
+        if df.empty:
+            logger.warning("Nenhum dado para processar. Finalizando.")
+            return False
+        
+        # 2. Transformar
+        logger.info("2. TRANSFORMANDO dados...")
+        df_transformed = transform_data(df)
+        
+        if df_transformed.empty:
+            logger.warning("Nenhum dado válido após transformações. Finalizando.")
+            return False
+        
+        # 3. Carregar
+        logger.info("3. CARREGANDO dados no PostgreSQL...")
+        engine = create_postgresql_engine()
+        load_data(df_transformed, engine)
+        
+        logger.info("=== ETL CONCLUÍDO COM SUCESSO! ===")
+        return True
+        
+    except Exception as e:
+        logger.error(f"ERRO CRÍTICO no ETL: {e}")
+        traceback.print_exc()
+        return False
+
+if __name__ == "__main__":
+    success = main()
+    sys.exit(0 if success else 1)
+
+
+
+
