@@ -1,4 +1,4 @@
-# README.md
+# Projeto de Portfólio – Engenharia de Dados
 
 Este projeto narra a construção de um pipeline de dados end-to-end (de ponta a ponta) que simula o sistema de ingestão de dados de uma frota de veículos e suas manutenções. O grande desafio foi implementar a extração de dados de uma fonte, o carregamento em um banco de dados relacional e, por fim, a automação completa de todo o fluxo.
 
